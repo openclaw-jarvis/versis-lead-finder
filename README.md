@@ -105,14 +105,11 @@ npm start
 - Retail & E-commerce (Retail & E-commerce)
 - Horeca & Recreatie (Hospitality & Recreation)
 
-## Database
+## Data Storage
 
-The SQLite database is stored in `data/leads.db`. To reset:
+The application uses an **in-memory database** seeded from `src/lib/seed-data.ts`. This ensures Vercel serverless compatibility.
 
-```bash
-rm data/leads.db
-npm run seed
-```
+**Important**: Changes made through the admin panel persist only during a single deployment. To add permanent companies, edit `seed-data.ts` and redeploy.
 
 ## Adding Companies
 
