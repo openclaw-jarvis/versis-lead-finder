@@ -1,51 +1,7 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-
-const dbPath = path.join(process.cwd(), 'data', 'leads.db');
-const db = new Database(dbPath);
-
-// Enable foreign keys
-db.pragma('journal_mode = WAL');
-
-// Initialize database schema
-db.exec(`
-  CREATE TABLE IF NOT EXISTS companies (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    kvk_number TEXT UNIQUE,
-    sector TEXT NOT NULL,
-    subsector TEXT,
-    size TEXT NOT NULL,
-    employee_count INTEGER,
-    revenue_estimate TEXT,
-    city TEXT NOT NULL,
-    province TEXT NOT NULL,
-    address TEXT,
-    postal_code TEXT,
-    website TEXT,
-    email TEXT,
-    phone TEXT,
-    description TEXT,
-    is_government BOOLEAN DEFAULT 0,
-    is_enterprise BOOLEAN DEFAULT 0,
-    is_tech BOOLEAN DEFAULT 0,
-    lead_score INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'new',
-    notes TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-  
-  CREATE INDEX IF NOT EXISTS idx_sector ON companies(sector);
-  CREATE INDEX IF NOT EXISTS idx_size ON companies(size);
-  CREATE INDEX IF NOT EXISTS idx_city ON companies(city);
-  CREATE INDEX IF NOT EXISTS idx_province ON companies(province);
-  CREATE INDEX IF NOT EXISTS idx_lead_score ON companies(lead_score);
-  CREATE INDEX IF NOT EXISTS idx_status ON companies(status);
-`);
+import { seedCompanies } from './seed-data';
 
 export interface Company {
-  id?: number;
+  id: number;
   name: string;
   kvk_number?: string;
   sector: string;
@@ -64,8 +20,8 @@ export interface Company {
   is_government?: boolean;
   is_enterprise?: boolean;
   is_tech?: boolean;
-  lead_score?: number;
-  status?: string;
+  lead_score: number;
+  status: string;
   notes?: string;
   created_at?: string;
   updated_at?: string;
@@ -85,7 +41,7 @@ export interface SearchFilters {
 }
 
 // Calculate lead score for Versis (enterprise, government, tech focus)
-export function calculateLeadScore(company: Company): number {
+function calculateLeadScore(company: Omit<Company, 'id' | 'lead_score'>): number {
   let score = 0;
   
   // Size scoring (Versis targets enterprise)
@@ -134,195 +90,166 @@ export function calculateLeadScore(company: Company): number {
   return Math.min(score, 100);
 }
 
+// In-memory database (seeded from seed-data)
+const companies: Company[] = seedCompanies.map((c, index) => ({
+  id: index + 1,
+  name: c.name,
+  kvk_number: c.kvk_number,
+  sector: c.sector,
+  subsector: c.subsector,
+  size: c.size,
+  employee_count: c.employee_count,
+  revenue_estimate: c.revenue_estimate,
+  city: c.city,
+  province: c.province,
+  address: c.address,
+  postal_code: c.postal_code,
+  website: c.website,
+  email: c.email,
+  phone: c.phone,
+  description: c.description,
+  is_government: c.is_government ?? false,
+  is_enterprise: c.is_enterprise ?? false,
+  is_tech: c.is_tech ?? false,
+  lead_score: calculateLeadScore(c as any),
+  status: c.status || 'new',
+  notes: c.notes,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString()
+}));
+
 // Get all companies with optional filtering
 export function getCompanies(filters: SearchFilters = {}): Company[] {
-  let sql = 'SELECT * FROM companies WHERE 1=1';
-  const params: any[] = [];
+  let result = [...companies];
   
   if (filters.query) {
-    sql += ' AND (name LIKE ? OR description LIKE ? OR city LIKE ?)';
-    const q = `%${filters.query}%`;
-    params.push(q, q, q);
+    const q = filters.query.toLowerCase();
+    result = result.filter(c => 
+      c.name.toLowerCase().includes(q) ||
+      (c.description?.toLowerCase().includes(q)) ||
+      c.city.toLowerCase().includes(q)
+    );
   }
   
   if (filters.sector) {
-    sql += ' AND sector = ?';
-    params.push(filters.sector);
+    result = result.filter(c => c.sector === filters.sector);
   }
   
   if (filters.size) {
-    sql += ' AND size = ?';
-    params.push(filters.size);
+    result = result.filter(c => c.size === filters.size);
   }
   
   if (filters.province) {
-    sql += ' AND province = ?';
-    params.push(filters.province);
+    result = result.filter(c => c.province === filters.province);
   }
   
   if (filters.city) {
-    sql += ' AND city = ?';
-    params.push(filters.city);
+    result = result.filter(c => c.city === filters.city);
   }
   
   if (filters.minScore !== undefined) {
-    sql += ' AND lead_score >= ?';
-    params.push(filters.minScore);
+    result = result.filter(c => c.lead_score >= filters.minScore!);
   }
   
   if (filters.status) {
-    sql += ' AND status = ?';
-    params.push(filters.status);
+    result = result.filter(c => c.status === filters.status);
   }
   
   if (filters.isGovernment) {
-    sql += ' AND is_government = 1';
+    result = result.filter(c => c.is_government);
   }
   
   if (filters.isEnterprise) {
-    sql += ' AND is_enterprise = 1';
+    result = result.filter(c => c.is_enterprise);
   }
   
   if (filters.isTech) {
-    sql += ' AND is_tech = 1';
+    result = result.filter(c => c.is_tech);
   }
   
-  sql += ' ORDER BY lead_score DESC, name ASC';
+  // Sort by lead score descending
+  result.sort((a, b) => b.lead_score - a.lead_score);
   
-  const stmt = db.prepare(sql);
-  return stmt.all(...params) as Company[];
+  return result;
 }
 
 // Get a single company by ID
 export function getCompanyById(id: number): Company | undefined {
-  const stmt = db.prepare('SELECT * FROM companies WHERE id = ?');
-  return stmt.get(id) as Company | undefined;
+  return companies.find(c => c.id === id);
 }
 
-// Insert a new company
-export function insertCompany(company: Company): number {
-  const score = calculateLeadScore(company);
-  
-  const stmt = db.prepare(`
-    INSERT INTO companies (
-      name, kvk_number, sector, subsector, size, employee_count, revenue_estimate,
-      city, province, address, postal_code, website, email, phone, description,
-      is_government, is_enterprise, is_tech, lead_score, status, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  
-  const result = stmt.run(
-    company.name,
-    company.kvk_number || null,
-    company.sector,
-    company.subsector || null,
-    company.size,
-    company.employee_count || null,
-    company.revenue_estimate || null,
-    company.city,
-    company.province,
-    company.address || null,
-    company.postal_code || null,
-    company.website || null,
-    company.email || null,
-    company.phone || null,
-    company.description || null,
-    company.is_government ? 1 : 0,
-    company.is_enterprise ? 1 : 0,
-    company.is_tech ? 1 : 0,
-    score,
-    company.status || 'new',
-    company.notes || null
-  );
-  
-  return result.lastInsertRowid as number;
+// Insert a new company (in-memory only, won't persist across deployments)
+export function insertCompany(company: Omit<Company, 'id' | 'lead_score' | 'created_at' | 'updated_at'>): number {
+  const newId = Math.max(...companies.map(c => c.id)) + 1;
+  const newCompany: Company = {
+    ...company,
+    id: newId,
+    lead_score: calculateLeadScore(company as any),
+    is_government: company.is_government ?? false,
+    is_enterprise: company.is_enterprise ?? false,
+    is_tech: company.is_tech ?? false,
+    status: company.status || 'new',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  companies.push(newCompany);
+  return newId;
 }
 
 // Update a company
-export function updateCompany(id: number, company: Partial<Company>): boolean {
-  const existing = getCompanyById(id);
-  if (!existing) return false;
+export function updateCompany(id: number, updates: Partial<Company>): boolean {
+  const index = companies.findIndex(c => c.id === id);
+  if (index === -1) return false;
   
-  const merged = { ...existing, ...company };
-  const score = calculateLeadScore(merged as Company);
-  
-  const stmt = db.prepare(`
-    UPDATE companies SET
-      name = ?, kvk_number = ?, sector = ?, subsector = ?, size = ?,
-      employee_count = ?, revenue_estimate = ?, city = ?, province = ?,
-      address = ?, postal_code = ?, website = ?, email = ?, phone = ?,
-      description = ?, is_government = ?, is_enterprise = ?, is_tech = ?,
-      lead_score = ?, status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `);
-  
-  stmt.run(
-    merged.name,
-    merged.kvk_number || null,
-    merged.sector,
-    merged.subsector || null,
-    merged.size,
-    merged.employee_count || null,
-    merged.revenue_estimate || null,
-    merged.city,
-    merged.province,
-    merged.address || null,
-    merged.postal_code || null,
-    merged.website || null,
-    merged.email || null,
-    merged.phone || null,
-    merged.description || null,
-    merged.is_government ? 1 : 0,
-    merged.is_enterprise ? 1 : 0,
-    merged.is_tech ? 1 : 0,
-    score,
-    merged.status || 'new',
-    merged.notes || null,
-    id
-  );
+  const existing = companies[index];
+  const merged = { ...existing, ...updates };
+  merged.lead_score = calculateLeadScore(merged as any);
+  merged.updated_at = new Date().toISOString();
+  companies[index] = merged;
   
   return true;
 }
 
 // Delete a company
 export function deleteCompany(id: number): boolean {
-  const stmt = db.prepare('DELETE FROM companies WHERE id = ?');
-  const result = stmt.run(id);
-  return result.changes > 0;
+  const index = companies.findIndex(c => c.id === id);
+  if (index === -1) return false;
+  companies.splice(index, 1);
+  return true;
 }
 
 // Get unique values for filters
 export function getFilterOptions() {
-  const sectors = db.prepare('SELECT DISTINCT sector FROM companies ORDER BY sector').all() as { sector: string }[];
-  const provinces = db.prepare('SELECT DISTINCT province FROM companies ORDER BY province').all() as { province: string }[];
-  const cities = db.prepare('SELECT DISTINCT city FROM companies ORDER BY city').all() as { city: string }[];
+  const sectors = [...new Set(companies.map(c => c.sector))].sort();
+  const provinces = [...new Set(companies.map(c => c.province))].sort();
+  const cities = [...new Set(companies.map(c => c.city))].sort();
   const sizes = ['micro', 'small', 'medium', 'large', 'enterprise'];
   const statuses = ['new', 'contacted', 'qualified', 'proposal', 'negotiation', 'won', 'lost'];
   
-  return {
-    sectors: sectors.map(s => s.sector),
-    provinces: provinces.map(p => p.province),
-    cities: cities.map(c => c.city),
-    sizes,
-    statuses
-  };
+  return { sectors, provinces, cities, sizes, statuses };
 }
 
 // Get statistics
 export function getStats() {
-  const total = (db.prepare('SELECT COUNT(*) as count FROM companies').get() as { count: number }).count;
-  const byStatus = db.prepare('SELECT status, COUNT(*) as count FROM companies GROUP BY status').all() as { status: string, count: number }[];
-  const bySector = db.prepare('SELECT sector, COUNT(*) as count FROM companies GROUP BY sector ORDER BY count DESC').all() as { sector: string, count: number }[];
-  const avgScore = (db.prepare('SELECT AVG(lead_score) as avg FROM companies').get() as { avg: number }).avg;
-  const highValue = (db.prepare('SELECT COUNT(*) as count FROM companies WHERE lead_score >= 70').get() as { count: number }).count;
+  const total = companies.length;
   
-  return {
-    total,
-    byStatus,
-    bySector,
-    avgScore: Math.round(avgScore || 0),
-    highValue
-  };
+  const statusCounts: Record<string, number> = {};
+  const sectorCounts: Record<string, number> = {};
+  
+  for (const c of companies) {
+    statusCounts[c.status] = (statusCounts[c.status] || 0) + 1;
+    sectorCounts[c.sector] = (sectorCounts[c.sector] || 0) + 1;
+  }
+  
+  const byStatus = Object.entries(statusCounts).map(([status, count]) => ({ status, count }));
+  const bySector = Object.entries(sectorCounts)
+    .map(([sector, count]) => ({ sector, count }))
+    .sort((a, b) => b.count - a.count);
+  
+  const avgScore = Math.round(companies.reduce((sum, c) => sum + c.lead_score, 0) / total);
+  const highValue = companies.filter(c => c.lead_score >= 70).length;
+  
+  return { total, byStatus, bySector, avgScore, highValue };
 }
 
-export default db;
+export default { getCompanies, getCompanyById, insertCompany, updateCompany, deleteCompany, getFilterOptions, getStats };

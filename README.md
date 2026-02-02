@@ -138,6 +138,14 @@ npm run seed
 
 None required for basic operation.
 
+## Live Demo
+
+🚀 **https://lead-finder-opal.vercel.app**
+
+## GitHub Repository
+
+📦 **https://github.com/openclaw-jarvis/versis-lead-finder**
+
 ## License
 
 Internal tool for Versis Systems.
